@@ -25,6 +25,16 @@ object Prefs {
     fun autoBack(c: Context) = sp(c).getBoolean("autoBack", true)
     fun setAutoBack(c: Context, v: Boolean) = sp(c).edit().putBoolean("autoBack", v).apply()
 
+    fun ytSkip(c: Context) = sp(c).getBoolean("ytSkip", true)
+    fun setYtSkip(c: Context, v: Boolean) = sp(c).edit().putBoolean("ytSkip", v).apply()
+
+    /** يضيف دومين لقائمة الحجب الإضافية */
+    fun addDomain(c: Context, d: String) {
+        val cur = customDomains(c).lines().map { it.trim() }.filter { it.isNotEmpty() }
+        if (d in cur) return
+        setCustomDomains(c, (cur + d).joinToString("\n"))
+    }
+
     fun customDomains(c: Context) = sp(c).getString("domains", "") ?: ""
     fun setCustomDomains(c: Context, v: String) = sp(c).edit().putString("domains", v).apply()
 

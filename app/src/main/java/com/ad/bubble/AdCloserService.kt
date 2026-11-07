@@ -71,10 +71,20 @@ class AdCloserService : AccessibilityService() {
     override fun onInterrupt() {}
 
     override fun onAccessibilityEvent(e: AccessibilityEvent?) {
-        if (e == null || e.eventType != AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED) return
+        if (e == null) return
         val pkg = e.packageName?.toString() ?: return
-        val cls = e.className?.toString() ?: return
         if (pkg == packageName) return
+
+        // يوتيوب: تخطي الإعلان تلقائياً + كتم صوته
+        if (pkg in YT_PKGS) {
+            if (Prefs.ytSkip(this)) ytCheck(pkg)
+        } else if (ytMuted && e.eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED) {
+            setMute(false)
+            ytMuted = false
+        }
+
+        if (e.eventType != AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED) return
+        val cls = e.className?.toString() ?: return
         if (!Prefs.closer(this)) {
             hideCover()
             return
@@ -84,6 +94,63 @@ class AdCloserService : AccessibilityService() {
             if (pkg !in Prefs.excluded(this) && SystemClock.uptimeMillis() > until) showCover(pkg)
         } else if (cover != null && isActivity(pkg, cls)) {
             hideCover()
+        }
+    }
+
+    // ---------------- يوتيوب ----------------
+    private val YT_PKGS = setOf("com.google.android.youtube", "com.google.android.apps.youtube.music")
+    private val ytSkipTexts = setOf(
+        "skip", "skip ad", "skip ads", "skip ad ›", "تخطي", "تخطّي", "تخطي الإعلان", "تخطي الإعلانات",
+        "تخطّي الإعلان", "تخطّي الإعلانات", "تجاوز", "تجاوز الإعلان"
+    )
+    private var lastYt = 0L
+    private var lastYtClick = 0L
+    private var ytMuted = false
+
+    private fun ytCheck(pkg: String) {
+        val now = SystemClock.uptimeMillis()
+        if (now - lastYt < 400) return
+        lastYt = now
+        val root = findRoot(pkg) ?: return
+        var skip: AccessibilityNodeInfo? = null
+        var adShown = false
+        val q = ArrayDeque<AccessibilityNodeInfo>()
+        q.add(root)
+        var seen = 0
+        while (q.isNotEmpty() && seen < 1500) {
+            val n = q.removeFirst()
+            seen++
+            val id = (n.viewIdResourceName ?: "").substringAfter(":id/").lowercase()
+            val t = (n.text?.toString() ?: "").trim().lowercase()
+            val d = (n.contentDescription?.toString() ?: "").trim().lowercase()
+            // علامات خاصة بمشغّل الفيديو فقط (حتى ما ينكتم الصوت بسبب إعلانات الصفحة الرئيسية)
+            if (n.isVisibleToUser && (id.contains("ad_progress") || id.contains("ad_countdown") ||
+                id.contains("skip_ad") || id.contains("player_learn_more") || id.contains("ad_player_overlay") ||
+                id.contains("ad_text_overlay"))
+            ) adShown = true
+            if (skip == null && n.isVisibleToUser &&
+                (id.contains("skip_ad_button") || id == "skip_button" || id.contains("modern_skip_ad") ||
+                    t in ytSkipTexts || d in ytSkipTexts)
+            ) skip = n
+            for (i in 0 until n.childCount) n.getChild(i)?.let { q.add(it) }
+        }
+        if (skip != null && now - lastYtClick > 1000) {
+            lastYtClick = now
+            clickNode(skip)
+        }
+        if (Prefs.mute(this)) {
+            if (adShown && !ytMuted) { setMute(true); ytMuted = true }
+            else if (!adShown && ytMuted) { setMute(false); ytMuted = false }
+        }
+    }
+
+    private fun setMute(on: Boolean) {
+        try {
+            getSystemService(AudioManager::class.java).adjustStreamVolume(
+                AudioManager.STREAM_MUSIC,
+                if (on) AudioManager.ADJUST_MUTE else AudioManager.ADJUST_UNMUTE, 0
+            )
+        } catch (_: Exception) {
         }
     }
 
@@ -311,8 +378,15 @@ class AdCloserService : AccessibilityService() {
     }
 
     private fun tapThroughCover(x: Float, y: Float) {
-        val c = cover ?: return
-        val lp = coverParams ?: return
+        val c = cover
+        val lp = coverParams
+        if (c == null || lp == null) {
+            val g0 = GestureDescription.Builder()
+                .addStroke(GestureDescription.StrokeDescription(Path().apply { moveTo(x, y) }, 0, 60))
+                .build()
+            dispatchGesture(g0, null, null)
+            return
+        }
         lp.flags = lp.flags or WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE
         try { wm.updateViewLayout(c, lp) } catch (_: Exception) { }
         val path = Path().apply { moveTo(x, y) }

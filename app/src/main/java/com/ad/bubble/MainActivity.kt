@@ -39,6 +39,7 @@ class MainActivity : Activity() {
     private lateinit var vpnBtn: Button
     private lateinit var bubbleBtn: Button
     private lateinit var accBtn: Button
+    private lateinit var domainsEdit: EditText
 
     private fun dp(v: Float) = TypedValue.applyDimension(
         TypedValue.COMPLEX_UNIT_DIP, v, resources.displayMetrics
@@ -130,13 +131,19 @@ class MainActivity : Activity() {
         col.addView(switch("شاشة بيضة بدل السودة", Prefs.whiteCover(this)) { Prefs.setWhiteCover(this, it) })
         col.addView(switch("كتم الصوت وقت الإعلان", Prefs.mute(this)) { Prefs.setMute(this, it) })
         col.addView(switch("رجوع تلقائي إذا ما لگى زر الإغلاق", Prefs.autoBack(this)) { Prefs.setAutoBack(this, it) })
+        col.addView(switch("يوتيوب: تخطي الإعلان تلقائياً + كتم صوته", Prefs.ytSkip(this)) { Prefs.setYtSkip(this, it) })
+        col.addView(hint("إعلانات يوتيوب تجي من نفس سيرفرات الفيديو فما تنحجب، بس تنتخطى أول ما يطلع زر «تخطي». يحتاج الشاشة السودة (③) مفعّلة."))
+
+        col.addView(section("لعبة بعدها تطلع بيها إعلانات؟"))
+        col.addView(button("📋 آخر المواقع اللي طلبتها التطبيقات") { showRecent() })
+        col.addView(hint("افتح اللعبة لين يطلع الإعلان، وارجع هنا. دوّر على اسم اللعبة، وأي موقع بيه كلمة ad أو ads أو اسم شركة إعلانات، دوس عليه حتى ينحجب."))
 
         col.addView(section("استثناءات"))
         col.addView(button("التطبيقات المستثناة (تبقى بيها الإعلانات)") { pickExcluded() })
         col.addView(hint("مثلاً لعبة تريد بيها إعلان المكافأة (تشوف إعلان وتاخذ جوائز) — استثنيها، أو طفّي الفقاعة لحظة."))
 
         col.addView(section("دومينات إعلانات إضافية"))
-        val domains = EditText(this).apply {
+        domainsEdit = EditText(this).apply {
             setText(Prefs.customDomains(this@MainActivity))
             hint = "كل دومين بسطر، مثلاً: ads.example.com"
             inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_MULTI_LINE or InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS
@@ -144,9 +151,9 @@ class MainActivity : Activity() {
             gravity = Gravity.TOP or Gravity.START
             textDirection = View.TEXT_DIRECTION_LTR
         }
-        col.addView(domains)
+        col.addView(domainsEdit)
         col.addView(button("حفظ الدومينات") {
-            Prefs.setCustomDomains(this, domains.text.toString())
+            Prefs.setCustomDomains(this, domainsEdit.text.toString())
             Blocklist.load(this)
             Toast.makeText(this, "انحفظت ✅", Toast.LENGTH_SHORT).show()
         })
@@ -240,6 +247,54 @@ class MainActivity : Activity() {
             startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
         } catch (_: Exception) {
         }
+    }
+
+    private fun appName(uid: Int, cache: HashMap<Int, String>): String {
+        if (uid < 0) return "تطبيق غير معروف"
+        return cache.getOrPut(uid) {
+            val pm = packageManager
+            val pkg = try { pm.getPackagesForUid(uid)?.firstOrNull() } catch (_: Exception) { null }
+            if (pkg == null) "تطبيق نظام ($uid)"
+            else try { pm.getApplicationLabel(pm.getApplicationInfo(pkg, 0)).toString() } catch (_: Exception) { pkg }
+        }
+    }
+
+    private fun showRecent() {
+        val list = DnsLog.recent().take(250)
+        if (list.isEmpty()) {
+            Toast.makeText(this, "ماكو شي بعد — شغّل الحجب وافتح اللعبة", Toast.LENGTH_LONG).show()
+            return
+        }
+        val cache = HashMap<Int, String>()
+        val items = list.map {
+            (if (it.blocked) "🚫 " else "✅ ") + it.domain + "\n      " + appName(it.uid, cache)
+        }.toTypedArray()
+        AlertDialog.Builder(this)
+            .setTitle("دوس على موقع حتى تحجبه (🚫 = محجوب)")
+            .setItems(items) { _, w -> confirmBlock(list[w].domain) }
+            .setNeutralButton("مسح السجل") { _, _ -> DnsLog.clear() }
+            .setNegativeButton("سكّر", null)
+            .show()
+    }
+
+    private fun confirmBlock(d: String) {
+        val parts = d.split('.')
+        val options = ArrayList<String>()
+        options.add(d)
+        if (parts.size > 2) options.add(parts.takeLast(2).joinToString("."))
+        val labels = options.mapIndexed { i, o ->
+            if (i == 0) "حجب هذا الموقع بس:\n$o" else "حجب الموقع وكل فروعه:\n$o"
+        }.toTypedArray()
+        AlertDialog.Builder(this)
+            .setTitle("حجب؟ (إذا اللعبة خربت، امسحه من الدومينات الإضافية)")
+            .setItems(labels) { _, w ->
+                Prefs.addDomain(this, options[w])
+                Blocklist.load(this)
+                domainsEdit.setText(Prefs.customDomains(this))
+                Toast.makeText(this, "انحجب ✅ سكّر اللعبة وافتحها من جديد", Toast.LENGTH_LONG).show()
+            }
+            .setNegativeButton("إلغاء", null)
+            .show()
     }
 
     private fun pickExcluded() {

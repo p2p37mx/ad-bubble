@@ -11,6 +11,7 @@ import android.net.ConnectivityManager
 import android.net.Network
 import android.net.NetworkCapabilities
 import android.os.SystemClock
+import android.system.OsConstants
 import java.io.DataInputStream
 import java.io.FileInputStream
 import java.io.FileOutputStream
@@ -197,9 +198,36 @@ class AdVpnService : VpnService() {
         if (q != null && Blocklist.isBlocked(q.first)) {
             blockedCount.incrementAndGet()
             write(ipUdp(server, client, 53, sport, blockedReply(dns, q.second)))
+            logQuery(q.first, client, server, sport, true)
             return
         }
-        pool?.execute { forward(dns, client, server, sport) }
+        pool?.execute {
+            forward(dns, client, server, sport)
+            if (q != null) logQuery(q.first, client, server, sport, false)
+        }
+    }
+
+    private fun logQuery(domain: String, client: ByteArray, server: ByteArray, sport: Int, blocked: Boolean) {
+        val task = Runnable {
+            var uid = -1
+            if (Build.VERSION.SDK_INT >= 29) {
+                try {
+                    val cm = getSystemService(ConnectivityManager::class.java)
+                    uid = cm.getConnectionOwnerUid(
+                        OsConstants.IPPROTO_UDP,
+                        InetSocketAddress(InetAddress.getByAddress(client), sport),
+                        InetSocketAddress(InetAddress.getByAddress(server), 53)
+                    )
+                } catch (_: Exception) {
+                }
+            }
+            DnsLog.add(domain.lowercase(), uid, blocked)
+        }
+        if (blocked) {
+            try { pool?.execute(task) } catch (_: Exception) { }
+        } else {
+            task.run()
+        }
     }
 
     /** يرجّع اسم الدومين ونهاية قسم السؤال */

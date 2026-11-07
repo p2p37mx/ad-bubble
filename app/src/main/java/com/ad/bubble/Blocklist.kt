@@ -31,7 +31,16 @@ object Blocklist {
         // شبكات عامة
         "amazon-adsystem.com", "adnxs.com", "rubiconproject.com", "pubmatic.com",
         "openx.net", "criteo.com", "criteo.net", "adsrvr.org", "taboola.com", "outbrain.com",
-        "mopub.com", "adform.net", "smartadserver.com", "yieldmo.com", "verve.com", "pubnative.net"
+        "mopub.com", "adform.net", "smartadserver.com", "yieldmo.com", "verve.com", "pubnative.net",
+        // إضافات: شبكات ألعاب وقياس إعلانات
+        "mtgglobals.com", "liftoff.io", "vungle.io", "ironsrc.net", "kayzen.io", "aarki.net",
+        "digitalturbine.com", "adtimaserver.vn", "admost.com", "yandexadexchange.com",
+        "moatads.com", "doubleverify.com", "adsafeprotected.com", "googletagservices.com",
+        "adsappier.com", "appodeal.com", "appodealx.com", "bidmachine.io", "mobfox.com",
+        "adtiming.com", "toponad.com", "anythinktech.com", "tradplusad.com", "ad-brix.com",
+        "mobvista.com", "rayjump.com", "hyprmx.com", "ogury.co", "presage.io", "verve.io",
+        "adsymptotic.com", "unrulymedia.com", "adswizz.com", "spotxchange.com", "springserve.com",
+        "applovin.net", "bigossp.com", "pangle-ads.com", "inmobicdn.net", "adcolony.io"
     )
 
     @Volatile
