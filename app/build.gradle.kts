@@ -11,8 +11,8 @@ android {
         applicationId = "com.ad.bubble"
         minSdk = 26
         targetSdk = 33
-        versionCode = 5
-        versionName = "1.4"
+        versionCode = 6
+        versionName = "1.5"
     }
 
     signingConfigs {

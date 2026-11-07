@@ -29,6 +29,13 @@ object Prefs {
     fun cartoon(c: Context) = sp(c).getBoolean("cartoon", true)
     fun setCartoon(c: Context, v: Boolean) = sp(c).edit().putBoolean("cartoon", v).apply()
 
+    /** كل إعلان حيوان مختلف */
+    fun nextAnimal(c: Context): Int {
+        val n = (sp(c).getInt("animal", -1) + 1) % CartoonView.ANIMALS
+        sp(c).edit().putInt("animal", n).apply()
+        return n
+    }
+
     fun ytSkip(c: Context) = sp(c).getBoolean("ytSkip", true)
     fun setYtSkip(c: Context, v: Boolean) = sp(c).edit().putBoolean("ytSkip", v).apply()
 

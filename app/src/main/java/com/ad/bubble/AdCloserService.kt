@@ -219,7 +219,7 @@ class AdCloserService : AccessibilityService() {
         TypedValue.COMPLEX_UNIT_DIP, v, resources.displayMetrics
     ).toInt()
 
-    private val hintText = "✕ = سكّر الإعلان • دوستين = خليني أسكّره بنفسي"
+    private val hintText = "الإعلان يتسكّر وحده ونرجع للعبة"
 
     @SuppressLint("SetTextI18n")
     private fun showCover(pkg: String) {
@@ -233,7 +233,7 @@ class AdCloserService : AccessibilityService() {
 
         val root = FrameLayout(this)
         if (Prefs.cartoon(this)) {
-            val cv = CartoonView(this).apply { hint = hintText }
+            val cv = CartoonView(this).apply { animal = Prefs.nextAnimal(this@AdCloserService) }
             root.addView(cv, FrameLayout.LayoutParams(-1, -1))
             cartoon = cv
         } else {
@@ -272,10 +272,6 @@ class AdCloserService : AccessibilityService() {
             }
             elevation = dp(4f).toFloat()
             setOnClickListener { onXTap() }
-            setOnLongClickListener {
-                letUserClose()
-                true
-            }
         }
         val s = dp(60f)
         root.addView(close, FrameLayout.LayoutParams(s, s, Gravity.TOP or Gravity.LEFT).apply {
@@ -330,31 +326,24 @@ class AdCloserService : AccessibilityService() {
         }
     }
 
-    /** دوسة على ✕ مالتنا */
+    /**
+     * دوسة على ✕ مالتنا: ما تكشف الإعلان أبد (حتى لو الطفل ضل يدوس).
+     * بس تحاول تسكّر الإعلان من وراه، والحيوان ينطّ ويگول "استنى شوية".
+     */
     private fun onXTap() {
+        cartoon?.poke()
         val t = now()
-        if (t - xTapAt < 8000) {
-            // دوسة ثانية: نشيل الغطاء حتى المستخدم يدوس زر الإغلاق مال الإعلان بنفسه
-            letUserClose()
-            return
-        }
+        if (t - xTapAt < 1500) return
         xTapAt = t
         val root = findRoot(adPkg)
         val target = root?.let { scan(it).let { r -> r.close ?: r.corner } }
         if (target != null) {
             lastClick = t
             clickNode(target)
-        } else {
+        } else if (t - lastBack > 2000) {
             pressBack()
         }
-        cartoon?.hint = "إذا ما تسكّر، دوس ✕ مرة ثانية وسكّره بنفسك"
-        plainCount?.text = "إذا ما تسكّر، دوس ✕ مرة ثانية\nوسكّره بنفسك من زر الإعلان"
-    }
-
-    private fun letUserClose() {
-        adPkg?.let { p -> suppressUntil[p] = now() + 45_000 }
-        xTapAt = 0L
-        hideCover()
+        plainCount?.text = "استنى شوية ⏳\nالإعلان يتسكّر وحده"
     }
 
     private fun pressBack() {
@@ -367,11 +356,6 @@ class AdCloserService : AccessibilityService() {
         override fun run() {
             if (cover == null) return
             val t = now()
-            if (t - shownAt > 120_000) {
-                adPkg?.let { adActive.remove(it) }
-                hideCover()
-                return
-            }
             val root = findRoot(adPkg)
             val r = root?.let { scan(it) }
             val rSecs = r?.seconds
@@ -394,7 +378,7 @@ class AdCloserService : AccessibilityService() {
                 shown = maxOf(0, 30 - ((t - adStartedAt) / 1000).toInt()); exact = false
             }
             cartoon?.let { it.seconds = shown; it.exact = exact }
-            plainCount?.let { if (xTapAt == 0L || t - xTapAt > 8000) it.text = "تم حجب إعلان\nنرجع للعبة بعد ~$shown ثانية" }
+            plainCount?.let { if (t - xTapAt > 3000) it.text = "تم حجب إعلان\nنرجع للعبة بعد ~$shown ثانية" }
 
             // ندوس زر الإغلاق/التخطي
             val elapsed = t - shownAt
