@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">فقاعة الإعلانات</string>
+    <string name="acc_desc">يغطي الإعلانات اللي تطلع بنص الألعاب بشاشة سودة مع علامة ✕ ويحاول يغلقها تلقائياً. ما يقرأ أي شي ثاني.</string>
+</resources>
