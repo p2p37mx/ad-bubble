@@ -40,7 +40,9 @@ object Blocklist {
         "adtiming.com", "toponad.com", "anythinktech.com", "tradplusad.com", "ad-brix.com",
         "mobvista.com", "rayjump.com", "hyprmx.com", "ogury.co", "presage.io", "verve.io",
         "adsymptotic.com", "unrulymedia.com", "adswizz.com", "spotxchange.com", "springserve.com",
-        "applovin.net", "bigossp.com", "pangle-ads.com", "inmobicdn.net", "adcolony.io"
+        "applovin.net", "bigossp.com", "pangle-ads.com", "inmobicdn.net", "adcolony.io",
+        // وساطة إعلانات Unity LevelPlay و Moloco (شفناها بلعبة Save the Doge)
+        "mediation.unity3d.com", "moloco.com", "ads.unity3d.com", "ads-api.unity3d.com"
     )
 
     @Volatile
@@ -73,8 +75,37 @@ object Blocklist {
         "com.bytedance.sdk.openadsdk.", "com.chartboost.", "com.inmobi.ads.",
         "com.yandex.mobile.ads.", "com.fyber.", "com.tapjoy.", "com.startapp.",
         "com.smaato.", "com.my.target.", "sg.bigo.ads.", "com.moloco.", "com.appnext.",
-        "com.pubnative.", "net.pubnative."
+        "com.pubnative.", "net.pubnative.",
+        "com.unity3d.mediation.", "com.ironsource.", "com.applovin.", "com.mbridge.",
+        "com.bytedance.sdk.", "com.pangle.", "com.liftoff.", "com.digitalturbine.",
+        "com.appodeal.", "com.bidmachine.", "io.bidmachine.", "com.hyprmx.", "com.ogury.",
+        "com.verve.", "com.kidoz.", "com.adjoe.", "com.google.android.gms.ads"
     )
 
-    fun isAdActivity(cls: String): Boolean = AD_ACTIVITY_PREFIXES.any { cls.startsWith(it) }
+    private val AD_WORDS = listOf(
+        "adactivity", "adsactivity", "interstitial", "rewarded", "fullscreenad", "adunit",
+        "advideo", "videoad", "adview", "adplayer", "playableactivity", "adwebview",
+        "landingpage", "endcard", "mraid", "vast"
+    )
+
+    @Volatile
+    private var customScreens: Set<String> = emptySet()
+
+    fun loadScreens(c: Context) {
+        customScreens = Prefs.adScreens(c)
+    }
+
+    /** هل هاي الشاشة مال إعلان؟ pkg = اسم حزمة اللعبة */
+    fun isAdActivity(pkg: String, cls: String): Boolean {
+        if (cls in customScreens) return true
+        if (AD_ACTIVITY_PREFIXES.any { cls.startsWith(it) }) return true
+        // كلاس من مكتبة خارجية (مو من كود اللعبة نفسها) واسمه يدل على إعلان
+        val gameRoot = pkg.split('.').take(2).joinToString(".")
+        if (cls.startsWith(gameRoot)) return false
+        if (cls.startsWith("android.") || cls.startsWith("com.android.")) return false
+        val low = cls.lowercase()
+        if (low.contains(".ads.") || low.contains(".ad.")) return true
+        val simple = low.substringAfterLast('.')
+        return AD_WORDS.any { simple.contains(it) }
+    }
 }

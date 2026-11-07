@@ -35,6 +35,12 @@ object Prefs {
         setCustomDomains(c, (cur + d).joinToString("\n"))
     }
 
+    fun adScreens(c: Context): Set<String> = sp(c).getStringSet("adScreens", emptySet()) ?: emptySet()
+    fun addAdScreen(c: Context, cls: String) {
+        val cur = HashSet(adScreens(c)); cur.add(cls)
+        sp(c).edit().putStringSet("adScreens", cur).apply()
+    }
+
     fun customDomains(c: Context) = sp(c).getString("domains", "") ?: ""
     fun setCustomDomains(c: Context, v: String) = sp(c).edit().putString("domains", v).apply()
 

@@ -202,8 +202,8 @@ class AdVpnService : VpnService() {
             return
         }
         pool?.execute {
-            forward(dns, client, server, sport)
             if (q != null) logQuery(q.first, client, server, sport, false)
+            forward(dns, client, server, sport)
         }
     }
 

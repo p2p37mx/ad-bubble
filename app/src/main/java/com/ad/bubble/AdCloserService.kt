@@ -53,6 +53,7 @@ class AdCloserService : AccessibilityService() {
     override fun onServiceConnected() {
         super.onServiceConnected()
         wm = getSystemService(WINDOW_SERVICE) as WindowManager
+        Blocklist.loadScreens(this)
         connected = true
     }
 
@@ -89,7 +90,9 @@ class AdCloserService : AccessibilityService() {
             hideCover()
             return
         }
-        if (Blocklist.isAdActivity(cls)) {
+        val isAd = Blocklist.isAdActivity(pkg, cls)
+        if (isAd || isActivity(pkg, cls)) ScreenLog.add(pkg, cls, isAd)
+        if (isAd) {
             val until = suppressUntil[pkg] ?: 0L
             if (pkg !in Prefs.excluded(this) && SystemClock.uptimeMillis() > until) showCover(pkg)
         } else if (cover != null && isActivity(pkg, cls)) {

@@ -136,6 +136,7 @@ class MainActivity : Activity() {
 
         col.addView(section("لعبة بعدها تطلع بيها إعلانات؟"))
         col.addView(button("📋 آخر المواقع اللي طلبتها التطبيقات") { showRecent() })
+        col.addView(button("🪟 آخر الشاشات (إذا الشاشة السودة ما طلعت)") { showScreens() })
         col.addView(hint("افتح اللعبة لين يطلع الإعلان، وارجع هنا. دوّر على اسم اللعبة، وأي موقع بيه كلمة ad أو ads أو اسم شركة إعلانات، دوس عليه حتى ينحجب."))
 
         col.addView(section("استثناءات"))
@@ -273,6 +274,45 @@ class MainActivity : Activity() {
             .setTitle("دوس على موقع حتى تحجبه (🚫 = محجوب)")
             .setItems(items) { _, w -> confirmBlock(list[w].domain) }
             .setNeutralButton("مسح السجل") { _, _ -> DnsLog.clear() }
+            .setNegativeButton("سكّر", null)
+            .show()
+    }
+
+    private fun showScreens() {
+        if (!AdCloserService.connected) {
+            Toast.makeText(this, "فعّل الشاشة السودة (③) أول", Toast.LENGTH_LONG).show()
+            return
+        }
+        val list = ScreenLog.recent()
+        if (list.isEmpty()) {
+            Toast.makeText(this, "ماكو شي بعد — افتح اللعبة لين يطلع الإعلان وارجع", Toast.LENGTH_LONG).show()
+            return
+        }
+        val cache = HashMap<String, String>()
+        val pm = packageManager
+        fun label(pkg: String) = cache.getOrPut(pkg) {
+            try { pm.getApplicationLabel(pm.getApplicationInfo(pkg, 0)).toString() } catch (_: Exception) { pkg }
+        }
+        val items = list.map {
+            (if (it.ad) "🚫 " else "▫️ ") + it.cls.substringAfterLast('.') + "\n      " + label(it.pkg) +
+                "\n      " + it.cls
+        }.toTypedArray()
+        AlertDialog.Builder(this)
+            .setTitle("الشاشة اللي انفتحت وقت الإعلان، دوس عليها (🚫 = معروفة كإعلان)")
+            .setItems(items) { _, w ->
+                val e = list[w]
+                AlertDialog.Builder(this)
+                    .setTitle("هاي شاشة إعلان؟")
+                    .setMessage(e.cls + "\n\nإذا تأكد، كل مرة تنفتح راح تتغطى بالشاشة السودة.")
+                    .setPositiveButton("اي، إعلان") { _, _ ->
+                        Prefs.addAdScreen(this, e.cls)
+                        Blocklist.loadScreens(this)
+                        Toast.makeText(this, "تمام ✅", Toast.LENGTH_SHORT).show()
+                    }
+                    .setNegativeButton("لا", null)
+                    .show()
+            }
+            .setNeutralButton("مسح السجل") { _, _ -> ScreenLog.clear() }
             .setNegativeButton("سكّر", null)
             .show()
     }
