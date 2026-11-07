@@ -25,6 +25,10 @@ object Prefs {
     fun autoBack(c: Context) = sp(c).getBoolean("autoBack", true)
     fun setAutoBack(c: Context, v: Boolean) = sp(c).edit().putBoolean("autoBack", v).apply()
 
+    /** الشكل الكارتوني (تگدر ترجع للشاشة السودة القديمة من الإعدادات) */
+    fun cartoon(c: Context) = sp(c).getBoolean("cartoon", true)
+    fun setCartoon(c: Context, v: Boolean) = sp(c).edit().putBoolean("cartoon", v).apply()
+
     fun ytSkip(c: Context) = sp(c).getBoolean("ytSkip", true)
     fun setYtSkip(c: Context, v: Boolean) = sp(c).edit().putBoolean("ytSkip", v).apply()
 

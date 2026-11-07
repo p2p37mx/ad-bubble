@@ -17,7 +17,6 @@ import android.os.Looper
 import android.os.SystemClock
 import android.util.TypedValue
 import android.view.Gravity
-import android.view.View
 import android.view.WindowManager
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
@@ -27,8 +26,8 @@ import android.widget.LinearLayout
 import android.widget.TextView
 
 /**
- * إذا طلع إعلان شاشة كاملة (رغم الحجب) يغطيه بشاشة سودة/بيضة مع ✕
- * ويحاول يدوس زر الإغلاق/التخطي بنفسه أول ما يطلع.
+ * إذا طلع إعلان شاشة كاملة (رغم الحجب) يغطيه بشاشة كارتونية (أو سودة/بيضة) مع ✕
+ * ويحاول يدوس زر الإغلاق/التخطي مال الإعلان بنفسه أول ما يطلع.
  */
 class AdCloserService : AccessibilityService() {
 
@@ -36,17 +35,31 @@ class AdCloserService : AccessibilityService() {
         @Volatile
         var connected = false
         val coveredCount = java.util.concurrent.atomic.AtomicInteger(0)
+        private val STORE_PKGS = setOf(
+            "com.android.vending", "com.android.chrome", "org.mozilla.firefox", "com.sec.android.app.sbrowser",
+            "com.huawei.appmarket", "com.xiaomi.market", "com.opera.browser", "com.microsoft.emmx",
+            "com.heytap.browser", "com.mi.globalbrowser", "com.android.browser"
+        )
     }
 
     private val h = Handler(Looper.getMainLooper())
     private lateinit var wm: WindowManager
     private var cover: FrameLayout? = null
     private var coverParams: WindowManager.LayoutParams? = null
+    private var cartoon: CartoonView? = null
+    private var plainCount: TextView? = null
     private var adPkg: String? = null
     private var shownAt = 0L
+    private var adStartedAt = 0L
     private var lastBack = 0L
     private var lastClick = 0L
+    private var clickedAt = 0L
+    private var xTapAt = 0L
+    private var adSecs = -1
+    private var adSecsAt = 0L
     private var muted = false
+    /** الألعاب اللي بيها إعلان مفتوح هسه (حتى لو طلعت ورجعت) */
+    private val adActive = HashMap<String, Long>()
     private val suppressUntil = HashMap<String, Long>()
     private val activityCache = HashMap<String, Boolean>()
 
@@ -71,6 +84,11 @@ class AdCloserService : AccessibilityService() {
 
     override fun onInterrupt() {}
 
+    private fun now() = SystemClock.uptimeMillis()
+
+    private fun canCover(pkg: String): Boolean =
+        Prefs.closer(this) && pkg !in Prefs.excluded(this) && now() > (suppressUntil[pkg] ?: 0L)
+
     override fun onAccessibilityEvent(e: AccessibilityEvent?) {
         if (e == null) return
         val pkg = e.packageName?.toString() ?: return
@@ -84,19 +102,45 @@ class AdCloserService : AccessibilityService() {
             ytMuted = false
         }
 
-        if (e.eventType != AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED) return
-        val cls = e.className?.toString() ?: return
+        // إذا ضغطنا شي وفتح المتجر/المتصفح بالغلط → نرجع فوراً
+        if (e.eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED && pkg in STORE_PKGS &&
+            now() - clickedAt < 4000
+        ) {
+            clickedAt = 0L
+            performGlobalAction(GLOBAL_ACTION_BACK)
+            return
+        }
+
         if (!Prefs.closer(this)) {
             hideCover()
             return
         }
-        val isAd = Blocklist.isAdActivity(pkg, cls)
-        if (isAd || isActivity(pkg, cls)) ScreenLog.add(pkg, cls, isAd)
-        if (isAd) {
-            val until = suppressUntil[pkg] ?: 0L
-            if (pkg !in Prefs.excluded(this) && SystemClock.uptimeMillis() > until) showCover(pkg)
-        } else if (cover != null && isActivity(pkg, cls)) {
-            hideCover()
+
+        if (e.eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED) {
+            val cls = e.className?.toString() ?: return
+            val isAd = Blocklist.isAdActivity(pkg, cls)
+            val isAct = isAd || isActivity(pkg, cls)
+            if (isAct) ScreenLog.add(pkg, cls, isAd)
+            when {
+                isAd -> {
+                    if (pkg !in adActive) adActive[pkg] = now()
+                    if (canCover(pkg)) showCover(pkg)
+                }
+                isAct && pkg in adActive -> {
+                    // رجعت شاشة اللعبة نفسها → الإعلان تسكّر
+                    adActive.remove(pkg)
+                    if (adPkg == pkg) hideCover()
+                }
+                isAct -> {
+                    // تطبيق ثاني (مثلاً الشاشة الرئيسية) → نشيل الغطاء بس نتذكر الإعلان
+                    if (cover != null && adPkg != pkg) hideCover()
+                }
+                pkg in adActive && cover == null && canCover(pkg) -> showCover(pkg)
+            }
+        } else if (e.eventType == AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED) {
+            // رجع للعبة والإعلان بعده مفتوح
+            val since = adActive[pkg]
+            if (since != null && cover == null && now() - since < 5 * 60_000 && canCover(pkg)) showCover(pkg)
         }
     }
 
@@ -175,69 +219,71 @@ class AdCloserService : AccessibilityService() {
         TypedValue.COMPLEX_UNIT_DIP, v, resources.displayMetrics
     ).toInt()
 
+    private val hintText = "✕ = سكّر الإعلان • دوستين = خليني أسكّره بنفسي"
+
     @SuppressLint("SetTextI18n")
     private fun showCover(pkg: String) {
-        adPkg = pkg
-        shownAt = SystemClock.uptimeMillis()
-        lastBack = 0L
         if (cover != null) return
+        adPkg = pkg
+        shownAt = now()
+        adStartedAt = adActive[pkg] ?: shownAt
+        lastBack = 0L
+        adSecs = -1
         coveredCount.incrementAndGet()
 
-        val white = Prefs.whiteCover(this)
-        val bgc = if (white) Color.WHITE else Color.BLACK
-        val fg = if (white) Color.DKGRAY else Color.LTGRAY
-
-        val root = FrameLayout(this).apply { setBackgroundColor(bgc) }
-
-        val center = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            gravity = Gravity.CENTER
+        val root = FrameLayout(this)
+        if (Prefs.cartoon(this)) {
+            val cv = CartoonView(this).apply { hint = hintText }
+            root.addView(cv, FrameLayout.LayoutParams(-1, -1))
+            cartoon = cv
+        } else {
+            val white = Prefs.whiteCover(this)
+            root.setBackgroundColor(if (white) Color.WHITE else Color.BLACK)
+            val fg = if (white) Color.DKGRAY else Color.LTGRAY
+            val center = LinearLayout(this).apply {
+                orientation = LinearLayout.VERTICAL
+                gravity = Gravity.CENTER
+            }
+            center.addView(TextView(this).apply {
+                text = "🚫"; textSize = 54f; gravity = Gravity.CENTER
+            })
+            val count = TextView(this).apply {
+                text = "تم حجب إعلان\nجاري الإغلاق تلقائياً…"
+                textSize = 18f; setTextColor(fg); gravity = Gravity.CENTER
+            }
+            center.addView(count)
+            plainCount = count
+            root.addView(center, FrameLayout.LayoutParams(-1, -1))
+            root.addView(TextView(this).apply {
+                text = hintText; textSize = 12f; setTextColor(fg); gravity = Gravity.CENTER
+                setPadding(dp(16f), 0, dp(16f), dp(32f))
+            }, FrameLayout.LayoutParams(-1, -2, Gravity.BOTTOM))
         }
-        center.addView(TextView(this).apply {
-            text = "🚫"
-            textSize = 54f
-            gravity = Gravity.CENTER
-        })
-        center.addView(TextView(this).apply {
-            text = "تم حجب إعلان\nجاري الإغلاق تلقائياً…"
-            textSize = 18f
-            setTextColor(fg)
-            gravity = Gravity.CENTER
-        })
-        root.addView(center, FrameLayout.LayoutParams(-1, -1))
 
         val close = TextView(this).apply {
             text = "✕"
             textSize = 30f
             gravity = Gravity.CENTER
-            setTextColor(if (white) Color.BLACK else Color.WHITE)
+            setTextColor(0xFF1E293B.toInt())
             background = GradientDrawable().apply {
                 shape = GradientDrawable.OVAL
-                setColor(if (white) 0x22000000 else 0x44FFFFFF)
+                setColor(0xDDFFFFFF.toInt())
+                setStroke(dp(2f), 0x551E293B)
             }
-            setOnClickListener { pressBack() }
+            elevation = dp(4f).toFloat()
+            setOnClickListener { onXTap() }
             setOnLongClickListener {
-                // يخلي المستخدم يشوف الإعلان (مثلاً حتى ياخذ مكافأة)
-                adPkg?.let { p -> suppressUntil[p] = SystemClock.uptimeMillis() + 60_000 }
-                hideCover()
+                letUserClose()
                 true
             }
         }
-        val s = dp(64f)
-        root.addView(close, FrameLayout.LayoutParams(s, s, Gravity.TOP or Gravity.END).apply {
+        val s = dp(60f)
+        root.addView(close, FrameLayout.LayoutParams(s, s, Gravity.TOP or Gravity.LEFT).apply {
             topMargin = dp(40f)
-            marginEnd = dp(16f)
+            leftMargin = dp(16f)
         })
 
-        root.addView(TextView(this).apply {
-            text = "دوس ✕ للرجوع للعبة • ضغطة مطوّلة على ✕ تخلي الإعلان يبين (للمكافأة)"
-            textSize = 12f
-            setTextColor(fg)
-            gravity = Gravity.CENTER
-            setPadding(dp(16f), 0, dp(16f), dp(32f))
-        }, FrameLayout.LayoutParams(-1, -2, Gravity.BOTTOM))
-
-        // يمنع الضغط يوصل للإعلان تحت
+        // يمنع اللمس يوصل للإعلان تحت (حتى ما ينفتح المتجر بالغلط)
         root.isClickable = true
 
         val lp = WindowManager.LayoutParams(
@@ -257,19 +303,17 @@ class AdCloserService : AccessibilityService() {
             cover = root
             coverParams = lp
         } catch (_: Exception) {
+            cartoon = null
+            plainCount = null
             return
         }
 
-        if (Prefs.mute(this)) {
-            try {
-                getSystemService(AudioManager::class.java)
-                    .adjustStreamVolume(AudioManager.STREAM_MUSIC, AudioManager.ADJUST_MUTE, 0)
-                muted = true
-            } catch (_: Exception) {
-            }
+        if (Prefs.mute(this) && !muted) {
+            setMute(true)
+            muted = true
         }
         h.removeCallbacks(tick)
-        h.postDelayed(tick, 400)
+        h.postDelayed(tick, 300)
     }
 
     private fun hideCover() {
@@ -277,42 +321,95 @@ class AdCloserService : AccessibilityService() {
         cover?.let { try { wm.removeView(it) } catch (_: Exception) { } }
         cover = null
         coverParams = null
+        cartoon = null
+        plainCount = null
         adPkg = null
         if (muted) {
             muted = false
-            try {
-                getSystemService(AudioManager::class.java)
-                    .adjustStreamVolume(AudioManager.STREAM_MUSIC, AudioManager.ADJUST_UNMUTE, 0)
-            } catch (_: Exception) {
-            }
+            setMute(false)
         }
     }
 
+    /** دوسة على ✕ مالتنا */
+    private fun onXTap() {
+        val t = now()
+        if (t - xTapAt < 8000) {
+            // دوسة ثانية: نشيل الغطاء حتى المستخدم يدوس زر الإغلاق مال الإعلان بنفسه
+            letUserClose()
+            return
+        }
+        xTapAt = t
+        val root = findRoot(adPkg)
+        val target = root?.let { scan(it).let { r -> r.close ?: r.corner } }
+        if (target != null) {
+            lastClick = t
+            clickNode(target)
+        } else {
+            pressBack()
+        }
+        cartoon?.hint = "إذا ما تسكّر، دوس ✕ مرة ثانية وسكّره بنفسك"
+        plainCount?.text = "إذا ما تسكّر، دوس ✕ مرة ثانية\nوسكّره بنفسك من زر الإعلان"
+    }
+
+    private fun letUserClose() {
+        adPkg?.let { p -> suppressUntil[p] = now() + 45_000 }
+        xTapAt = 0L
+        hideCover()
+    }
+
     private fun pressBack() {
-        lastBack = SystemClock.uptimeMillis()
+        lastBack = now()
         performGlobalAction(GLOBAL_ACTION_BACK)
     }
 
-    // ---------------- محاولة الإغلاق التلقائي ----------------
+    // ---------------- الإغلاق التلقائي ----------------
     private val tick = object : Runnable {
         override fun run() {
             if (cover == null) return
-            val now = SystemClock.uptimeMillis()
-            if (now - shownAt > 90_000) {
+            val t = now()
+            if (t - shownAt > 120_000) {
+                adPkg?.let { adActive.remove(it) }
                 hideCover()
                 return
             }
             val root = findRoot(adPkg)
-            val node = root?.let { findClose(it) }
-            if (node != null) {
-                if (now - lastClick > 1200) {
-                    lastClick = now
-                    clickNode(node)
-                }
-            } else if (Prefs.autoBack(this@AdCloserService) && now - shownAt > 1500 && now - lastBack > 2500) {
+            val r = root?.let { scan(it) }
+            val rSecs = r?.seconds
+            val rClose = r?.close
+            val rCorner = r?.corner
+
+            // العد التنازلي
+            if (rSecs != null) {
+                adSecs = rSecs
+                adSecsAt = t
+            } else if (adSecs > 0 && t - adSecsAt >= 1000) {
+                adSecs -= 1
+                adSecsAt = t
+            }
+            val shown: Int
+            val exact: Boolean
+            if (adSecs >= 0) {
+                shown = adSecs; exact = true
+            } else {
+                shown = maxOf(0, 30 - ((t - adStartedAt) / 1000).toInt()); exact = false
+            }
+            cartoon?.let { it.seconds = shown; it.exact = exact }
+            plainCount?.let { if (xTapAt == 0L || t - xTapAt > 8000) it.text = "تم حجب إعلان\nنرجع للعبة بعد ~$shown ثانية" }
+
+            // ندوس زر الإغلاق/التخطي
+            val elapsed = t - shownAt
+            if (rClose != null && t - lastClick > 1200) {
+                lastClick = t
+                clickNode(rClose)
+            } else if (rCorner != null && elapsed > 2500 && t - lastClick > 1800) {
+                lastClick = t
+                clickNode(rCorner)
+            } else if (rClose == null && rCorner == null &&
+                Prefs.autoBack(this@AdCloserService) && elapsed > 1500 && t - lastBack > 3000
+            ) {
                 pressBack()
             }
-            h.postDelayed(this, 600)
+            h.postDelayed(this, 500)
         }
     }
 
@@ -330,50 +427,97 @@ class AdCloserService : AccessibilityService() {
         return if (r?.packageName?.toString() == pkg) r else null
     }
 
-    private val closeWords = listOf("close", "skip", "dismiss", "إغلاق", "اغلاق", "أغلق", "اغلق", "تخطي", "تخطّي", "تخطى")
-    private val badWords = listOf("install", "download", "تثبيت", "تحميل", "open", "فتح", "learn", "more")
-    private val xMarks = setOf("x", "✕", "✖", "×", "╳", "⨯", "✗")
+    private val closeWords = listOf("close", "skip", "dismiss", "إغلاق", "اغلاق", "أغلق", "اغلق", "تخطي", "تخطّي", "تخطى", "تجاوز")
+    private val badWords = listOf(
+        "install", "download", "تثبيت", "تحميل", "open", "فتح", "learn", "more", "adchoices", "ad choices",
+        "info", "option", "privacy", "report", "feedback", "sound", "mute", "volume", "الصوت", "كتم", "خيارات"
+    )
+    private val xMarks = setOf("x", "✕", "✖", "×", "╳", "⨯", "✗", "›", "»", ">", "⏭", "→", "▶▶")
+    private val numRe = Regex("""^(\d{1,2})$""")
+    private val secRe = Regex("""(\d{1,2})\s*(s|sec|secs|seconds|second|ث|ثانية|ثواني|ثوان)\b""", RegexOption.IGNORE_CASE)
+    private val inRe = Regex("""(?:in|بعد)\s*(\d{1,2})""", RegexOption.IGNORE_CASE)
 
-    private fun isClose(n: AccessibilityNodeInfo): Boolean {
-        if (!n.isVisibleToUser) return false
-        val t = (n.text?.toString() ?: "").trim().lowercase()
-        val d = (n.contentDescription?.toString() ?: "").trim().lowercase()
-        val id = (n.viewIdResourceName ?: "").lowercase()
-        for (s in listOf(t, d)) {
-            if (s.isEmpty() || s.length > 24) continue
-            if (s in xMarks) return true
-            if (badWords.any { s.contains(it) }) continue
-            if (closeWords.any { s.contains(it) }) return true
-        }
-        val idTail = id.substringAfter(":id/", id)
-        if (idTail.isNotEmpty() && (idTail.contains("close") || idTail.contains("skip"))) return true
-        return false
-    }
+    private class Scan(val close: AccessibilityNodeInfo?, val corner: AccessibilityNodeInfo?, val seconds: Int?)
 
-    private fun findClose(root: AccessibilityNodeInfo): AccessibilityNodeInfo? {
+    /** يدوّر بالإعلان على: زر إغلاق واضح، زر صغير بالزاوية (سهم/✕ بلا اسم)، ورقم العد التنازلي */
+    private fun scan(root: AccessibilityNodeInfo): Scan {
+        val dm = resources.displayMetrics
+        val sw = dm.widthPixels
+        val shh = dm.heightPixels
+        val minS = dp(14f)
+        val maxS = dp(96f)
+        var close: AccessibilityNodeInfo? = null
+        var corner: AccessibilityNodeInfo? = null
+        var cornerScore = Int.MAX_VALUE
+        var secs: Int? = null
+        val rect = Rect()
         val q = ArrayDeque<AccessibilityNodeInfo>()
         q.add(root)
         var seen = 0
-        while (q.isNotEmpty() && seen < 500) {
+        while (q.isNotEmpty() && seen < 800) {
             val n = q.removeFirst()
             seen++
-            if (isClose(n)) return n
             for (i in 0 until n.childCount) n.getChild(i)?.let { q.add(it) }
+            if (!n.isVisibleToUser) continue
+            val t = (n.text?.toString() ?: "").trim().lowercase()
+            val d = (n.contentDescription?.toString() ?: "").trim().lowercase()
+            val id = (n.viewIdResourceName ?: "").substringAfter(":id/").lowercase()
+            val words = "$t $d $id"
+            val bad = badWords.any { words.contains(it) }
+
+            // رقم العد التنازلي
+            if (secs == null) {
+                for (s in listOf(t, d)) {
+                    if (s.isEmpty() || s.length > 30) continue
+                    val m = numRe.find(s) ?: secRe.find(s) ?: inRe.find(s)
+                    val v = m?.groupValues?.get(1)?.toIntOrNull()
+                    if (v != null && v in 1..90) { secs = v; break }
+                }
+            }
+
+            if (bad) continue
+            // زر إغلاق واضح
+            if (close == null) {
+                var hit = false
+                for (s in listOf(t, d)) {
+                    if (s.isEmpty() || s.length > 24) continue
+                    if (s in xMarks || closeWords.any { s.contains(it) }) hit = true
+                }
+                if (id.contains("close") || id.contains("skip") || id.contains("dismiss") || id.contains("exit")) hit = true
+                if (hit) { close = n; continue }
+            }
+            // زر صغير بالزاوية الفوگانية (السهم أو ✕ بلا اسم)
+            n.getBoundsInScreen(rect)
+            val w = rect.width()
+            val hh = rect.height()
+            if (w < minS || hh < minS || w > maxS || hh > maxS) continue
+            if (t.length > 3) continue
+            val cls = n.className?.toString() ?: ""
+            val tappable = n.isClickable || cls.endsWith("ImageView") || cls.endsWith("ImageButton") || cls.endsWith("Button")
+            if (!tappable) continue
+            val cx = rect.centerX()
+            val cy = rect.centerY()
+            if (cy > shh * 0.22f) continue
+            val dx = minOf(cx, sw - cx)
+            if (dx > sw * 0.25f) continue
+            val score = dx + cy
+            if (score < cornerScore) { cornerScore = score; corner = n }
         }
-        return null
+        return Scan(close, corner, secs)
     }
 
     private fun clickNode(node: AccessibilityNodeInfo) {
+        clickedAt = now()
         var n: AccessibilityNodeInfo? = node
         var hops = 0
-        while (n != null && hops < 5) {
+        while (n != null && hops < 3) {
             if (n.isClickable && n.isEnabled) {
                 if (n.performAction(AccessibilityNodeInfo.ACTION_CLICK)) return
             }
             n = n.parent
             hops++
         }
-        // ما ينضغط عادي → نسوي لمسة على مكان الزر (نخلي الغطاء ما يمسك اللمسة لحظة)
+        // ما ينضغط عادي → لمسة على مكان الزر (الغطاء ما يمسك اللمسة لحظة)
         val r = Rect()
         node.getBoundsInScreen(r)
         if (r.isEmpty) return
@@ -381,21 +525,17 @@ class AdCloserService : AccessibilityService() {
     }
 
     private fun tapThroughCover(x: Float, y: Float) {
+        val g = GestureDescription.Builder()
+            .addStroke(GestureDescription.StrokeDescription(Path().apply { moveTo(x, y) }, 0, 60))
+            .build()
         val c = cover
         val lp = coverParams
         if (c == null || lp == null) {
-            val g0 = GestureDescription.Builder()
-                .addStroke(GestureDescription.StrokeDescription(Path().apply { moveTo(x, y) }, 0, 60))
-                .build()
-            dispatchGesture(g0, null, null)
+            dispatchGesture(g, null, null)
             return
         }
         lp.flags = lp.flags or WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE
         try { wm.updateViewLayout(c, lp) } catch (_: Exception) { }
-        val path = Path().apply { moveTo(x, y) }
-        val g = GestureDescription.Builder()
-            .addStroke(GestureDescription.StrokeDescription(path, 0, 60))
-            .build()
         h.postDelayed({
             dispatchGesture(g, null, null)
             h.postDelayed({
