@@ -191,6 +191,7 @@ class MainActivity : Activity() {
         status.text =
             "الحجب: " + (if (vpn) "شغّال ✅" else "طافي ⛔") + "\n" +
             "طلبات إعلانات انحجبت: " + AdVpnService.blockedCount.get() + "\n" +
+            "طلبات نت مرّت: " + AdVpnService.answeredCount.get() + " • فشلت: " + AdVpnService.failedCount.get() + "\n" +
             "الشاشة السودة: " + (if (acc) "مفعّلة ✅" else "مو مفعّلة") +
             (if (acc) " (غطّت " + AdCloserService.coveredCount.get() + " إعلان)" else "") + "\n" +
             "الفقاعة: " + (if (BubbleService.running) "ظاهرة" else "مخفية")
