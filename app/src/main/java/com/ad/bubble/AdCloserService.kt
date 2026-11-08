@@ -48,6 +48,13 @@ class AdCloserService : AccessibilityService() {
     private var coverParams: WindowManager.LayoutParams? = null
     private var cartoon: CartoonView? = null
     private var plainCount: TextView? = null
+    private var xBtn: TextView? = null
+    private var skipBtn: TextView? = null
+    private var adClose: AccessibilityNodeInfo? = null
+    private var adSkip: AccessibilityNodeInfo? = null
+    private var blindMode = false
+    private var lastBlind = 0L
+    private var blindSide = 0
     private var adPkg: String? = null
     private var shownAt = 0L
     private var adStartedAt = 0L
@@ -233,7 +240,10 @@ class AdCloserService : AccessibilityService() {
 
         val root = FrameLayout(this)
         if (Prefs.cartoon(this)) {
-            val cv = CartoonView(this).apply { animal = Prefs.nextAnimal(this@AdCloserService) }
+            val cv = CartoonView(this).apply {
+                animal = Prefs.nextAnimal(this@AdCloserService)
+                countUp = Prefs.countUp(this@AdCloserService)
+            }
             root.addView(cv, FrameLayout.LayoutParams(-1, -1))
             cartoon = cv
         } else {
@@ -260,24 +270,27 @@ class AdCloserService : AccessibilityService() {
             }, FrameLayout.LayoutParams(-1, -2, Gravity.BOTTOM))
         }
 
-        val close = TextView(this).apply {
-            text = "✕"
-            textSize = 30f
-            gravity = Gravity.CENTER
-            setTextColor(0xFF1E293B.toInt())
-            background = GradientDrawable().apply {
-                shape = GradientDrawable.OVAL
-                setColor(0xDDFFFFFF.toInt())
-                setStroke(dp(2f), 0x551E293B)
-            }
-            elevation = dp(4f).toFloat()
-            setOnClickListener { onXTap() }
-        }
+        // ✕ مالتنا: مخفية لين يطلع زر الإغلاق الحقيقي بالإعلان، وبعدها تصير واضحة وتنضغط
+        val close = roundBtn("✕").apply { setOnClickListener { onXTap() } }
         val s = dp(60f)
         root.addView(close, FrameLayout.LayoutParams(s, s, Gravity.TOP or Gravity.LEFT).apply {
             topMargin = dp(40f)
             leftMargin = dp(16f)
         })
+        xBtn = close
+        // سهم التجاوز: يطلع باليمين إذا الإعلان بيه زر تجاوز
+        val skip = roundBtn("⏭").apply { setOnClickListener { onSkipTap() } }
+        root.addView(skip, FrameLayout.LayoutParams(s, s, Gravity.TOP or Gravity.RIGHT).apply {
+            topMargin = dp(40f)
+            rightMargin = dp(16f)
+        })
+        skipBtn = skip
+        adClose = null
+        adSkip = null
+        blindMode = false
+        lastBlind = 0L
+        setBtn(close, false)
+        setBtn(skip, false, hide = true)
 
         // يمنع اللمس يوصل للإعلان تحت (حتى ما ينفتح المتجر بالغلط)
         root.isClickable = true
@@ -301,6 +314,8 @@ class AdCloserService : AccessibilityService() {
         } catch (_: Exception) {
             cartoon = null
             plainCount = null
+            xBtn = null
+            skipBtn = null
             return
         }
 
@@ -319,6 +334,10 @@ class AdCloserService : AccessibilityService() {
         coverParams = null
         cartoon = null
         plainCount = null
+        xBtn = null
+        skipBtn = null
+        adClose = null
+        adSkip = null
         adPkg = null
         if (muted) {
             muted = false
@@ -326,24 +345,72 @@ class AdCloserService : AccessibilityService() {
         }
     }
 
+    private fun roundBtn(label: String) = TextView(this).apply {
+        text = label
+        textSize = 28f
+        gravity = Gravity.CENTER
+        setTextColor(0xFF1E293B.toInt())
+        background = GradientDrawable().apply {
+            shape = GradientDrawable.OVAL
+            setColor(0xEEFFFFFF.toInt())
+            setStroke(dp(3f), 0xFF1E293B.toInt())
+        }
+        elevation = dp(6f).toFloat()
+    }
+
+    /** on = واضح وينضغط، off = باهت (شبه مخفي) */
+    private fun setBtn(v: TextView?, on: Boolean, hide: Boolean = false) {
+        v ?: return
+        v.visibility = if (hide && !on) android.view.View.INVISIBLE else android.view.View.VISIBLE
+        v.alpha = if (on) 1f else 0.12f
+        v.scaleX = if (on) 1f else 0.85f
+        v.scaleY = if (on) 1f else 0.85f
+        v.elevation = if (on) dp(8f).toFloat() else 0f
+    }
+
     /**
-     * دوسة على ✕ مالتنا: ما تكشف الإعلان أبد (حتى لو الطفل ضل يدوس).
-     * بس تحاول تسكّر الإعلان من وراه، والحيوان ينطّ ويگول "استنى شوية".
+     * ✕ مالتنا: تشتغل بس لما يطلع زر الإغلاق الحقيقي بالإعلان.
+     * قبلها الدوس عليها ما يكشف الإعلان، بس الحيوان ينطّ ويگول "استنى شوية".
      */
     private fun onXTap() {
         cartoon?.poke()
-        val t = now()
-        if (t - xTapAt < 1500) return
-        xTapAt = t
-        val root = findRoot(adPkg)
-        val target = root?.let { scan(it).let { r -> r.close ?: r.corner } }
-        if (target != null) {
-            lastClick = t
-            clickNode(target)
-        } else if (t - lastBack > 2000) {
-            pressBack()
+        val c = adClose
+        if (c == null) {
+            plainCount?.text = "استنى شوية ⏳\nالإعلان يتسكّر وحده"
+            return
         }
-        plainCount?.text = "استنى شوية ⏳\nالإعلان يتسكّر وحده"
+        val t = now()
+        if (t - xTapAt < 800) return
+        xTapAt = t
+        lastClick = t
+        clickNode(c)
+    }
+
+    /** سهم التجاوز مالتنا: يدوس زر التجاوز بالإعلان */
+    private fun onSkipTap() {
+        val t = now()
+        if (t - xTapAt < 800) return
+        xTapAt = t
+        val k = adSkip
+        if (k != null) {
+            lastClick = t
+            clickNode(k)
+        } else if (blindMode) {
+            blindTap()
+        } else {
+            cartoon?.poke()
+        }
+    }
+
+    /** إذا الإعلان ما يبين أزراره (مرسوم داخل لعبة/ويب)، ندوس أماكن الأزرار المعتادة بالزوايا */
+    private fun blindTap() {
+        val dm = resources.displayMetrics
+        val x = if (blindSide % 2 == 0) dm.widthPixels * 0.07f else dm.widthPixels * 0.93f
+        val y = dm.heightPixels * 0.055f
+        blindSide++
+        lastBlind = now()
+        clickedAt = now()
+        tapThroughCover(x, y)
     }
 
     private fun pressBack() {
@@ -360,9 +427,9 @@ class AdCloserService : AccessibilityService() {
             val r = root?.let { scan(it) }
             val rSecs = r?.seconds
             val rClose = r?.close
-            val rCorner = r?.corner
+            val rSkip = r?.skip ?: r?.corner
 
-            // العد التنازلي
+            // العد (من 1 لـ 10 يتكرر، أو العد التنازلي القديم)
             if (rSecs != null) {
                 adSecs = rSecs
                 adSecsAt = t
@@ -380,18 +447,27 @@ class AdCloserService : AccessibilityService() {
             cartoon?.let { it.seconds = shown; it.exact = exact }
             plainCount?.let { if (t - xTapAt > 3000) it.text = "تم حجب إعلان\nنرجع للعبة بعد ~$shown ثانية" }
 
-            // ندوس زر الإغلاق/التخطي
+            // حالة الأزرار
+            adClose = rClose
+            adSkip = rSkip
             val elapsed = t - shownAt
+            if (!blindMode && rClose == null && rSkip == null && elapsed > 32_000) blindMode = true
+            setBtn(xBtn, rClose != null)
+            setBtn(skipBtn, rSkip != null || blindMode, hide = true)
+
+            // الإغلاق التلقائي
             if (rClose != null && t - lastClick > 1200) {
                 lastClick = t
                 clickNode(rClose)
-            } else if (rCorner != null && elapsed > 2500 && t - lastClick > 1800) {
+            } else if (rSkip != null && elapsed > 2500 && t - lastClick > 1800) {
                 lastClick = t
-                clickNode(rCorner)
-            } else if (rClose == null && rCorner == null &&
-                Prefs.autoBack(this@AdCloserService) && elapsed > 1500 && t - lastBack > 3000
-            ) {
-                pressBack()
+                clickNode(rSkip)
+            } else if (rClose == null && rSkip == null) {
+                if (blindMode && t - lastBlind > 3500) {
+                    blindTap()
+                } else if (!blindMode && Prefs.autoBack(this@AdCloserService) && elapsed > 1500 && t - lastBack > 3000) {
+                    pressBack()
+                }
             }
             h.postDelayed(this, 500)
         }
@@ -411,17 +487,24 @@ class AdCloserService : AccessibilityService() {
         return if (r?.packageName?.toString() == pkg) r else null
     }
 
-    private val closeWords = listOf("close", "skip", "dismiss", "إغلاق", "اغلاق", "أغلق", "اغلق", "تخطي", "تخطّي", "تخطى", "تجاوز")
+    private val closeWords = listOf("close", "dismiss", "إغلاق", "اغلاق", "أغلق", "اغلق", "سكّر", "سكر")
+    private val skipWords = listOf("skip", "تخطي", "تخطّي", "تخطى", "تجاوز", "next", "التالي")
+    private val skipMarks = setOf("›", "»", ">", "⏭", "→", "▶▶", "▶|", "⏩", ">>", "▸▸")
     private val badWords = listOf(
         "install", "download", "تثبيت", "تحميل", "open", "فتح", "learn", "more", "adchoices", "ad choices",
         "info", "option", "privacy", "report", "feedback", "sound", "mute", "volume", "الصوت", "كتم", "خيارات"
     )
-    private val xMarks = setOf("x", "✕", "✖", "×", "╳", "⨯", "✗", "›", "»", ">", "⏭", "→", "▶▶")
+    private val xMarks = setOf("x", "✕", "✖", "×", "╳", "⨯", "✗")
     private val numRe = Regex("""^(\d{1,2})$""")
     private val secRe = Regex("""(\d{1,2})\s*(s|sec|secs|seconds|second|ث|ثانية|ثواني|ثوان)\b""", RegexOption.IGNORE_CASE)
     private val inRe = Regex("""(?:in|بعد)\s*(\d{1,2})""", RegexOption.IGNORE_CASE)
 
-    private class Scan(val close: AccessibilityNodeInfo?, val corner: AccessibilityNodeInfo?, val seconds: Int?)
+    private class Scan(
+        val close: AccessibilityNodeInfo?,
+        val skip: AccessibilityNodeInfo?,
+        val corner: AccessibilityNodeInfo?,
+        val seconds: Int?
+    )
 
     /** يدوّر بالإعلان على: زر إغلاق واضح، زر صغير بالزاوية (سهم/✕ بلا اسم)، ورقم العد التنازلي */
     private fun scan(root: AccessibilityNodeInfo): Scan {
@@ -431,6 +514,7 @@ class AdCloserService : AccessibilityService() {
         val minS = dp(14f)
         val maxS = dp(96f)
         var close: AccessibilityNodeInfo? = null
+        var skip: AccessibilityNodeInfo? = null
         var corner: AccessibilityNodeInfo? = null
         var cornerScore = Int.MAX_VALUE
         var secs: Int? = null
@@ -461,15 +545,17 @@ class AdCloserService : AccessibilityService() {
 
             if (bad) continue
             // زر إغلاق واضح
-            if (close == null) {
-                var hit = false
-                for (s in listOf(t, d)) {
-                    if (s.isEmpty() || s.length > 24) continue
-                    if (s in xMarks || closeWords.any { s.contains(it) }) hit = true
-                }
-                if (id.contains("close") || id.contains("skip") || id.contains("dismiss") || id.contains("exit")) hit = true
-                if (hit) { close = n; continue }
+            var isClose = false
+            var isSkip = false
+            for (s in listOf(t, d)) {
+                if (s.isEmpty() || s.length > 24) continue
+                if (s in xMarks || closeWords.any { s.contains(it) }) isClose = true
+                if (s in skipMarks || skipWords.any { s.contains(it) }) isSkip = true
             }
+            if (id.contains("close") || id.contains("dismiss") || id.contains("exit")) isClose = true
+            if (id.contains("skip")) isSkip = true
+            if (isClose) { if (close == null) close = n; continue }
+            if (isSkip) { if (skip == null) skip = n; continue }
             // زر صغير بالزاوية الفوگانية (السهم أو ✕ بلا اسم)
             n.getBoundsInScreen(rect)
             val w = rect.width()
@@ -487,7 +573,7 @@ class AdCloserService : AccessibilityService() {
             val score = dx + cy
             if (score < cornerScore) { cornerScore = score; corner = n }
         }
-        return Scan(close, corner, secs)
+        return Scan(close, skip, corner, secs)
     }
 
     private fun clickNode(node: AccessibilityNodeInfo) {

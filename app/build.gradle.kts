@@ -11,7 +11,7 @@ android {
         applicationId = "com.ad.bubble"
         minSdk = 26
         targetSdk = 33
-        versionCode = 7
+        versionCode = 8
         versionName = "1.5"
     }
 

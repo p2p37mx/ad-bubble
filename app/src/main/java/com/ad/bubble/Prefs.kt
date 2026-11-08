@@ -36,6 +36,10 @@ object Prefs {
         return n
     }
 
+    /** العد من 1 لـ 10 (إذا طافي يرجع العد التنازلي القديم) */
+    fun countUp(c: Context) = sp(c).getBoolean("countUp", true)
+    fun setCountUp(c: Context, v: Boolean) = sp(c).edit().putBoolean("countUp", v).apply()
+
     fun ytSkip(c: Context) = sp(c).getBoolean("ytSkip", true)
     fun setYtSkip(c: Context, v: Boolean) = sp(c).edit().putBoolean("ytSkip", v).apply()
 

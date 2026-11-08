@@ -36,6 +36,11 @@ class CartoonView(c: Context) : View(c) {
         }
     var exact = false
     var animal = 0
+    /** true = نعد من 1 لـ 10 ويتكرر (حتى الطفل يتعلم الأرقام) */
+    var countUp = true
+    private var lastCount = 0
+    private val WORDS = arrayOf("واحد", "اثنين", "ثلاثة", "أربعة", "خمسة", "ستة", "سبعة", "ثمانية", "تسعة", "عشرة")
+    private val AR_DIGITS = arrayOf("١", "٢", "٣", "٤", "٥", "٦", "٧", "٨", "٩", "١٠")
 
     private val start = SystemClock.uptimeMillis()
     private var popAt = 0L
@@ -116,7 +121,10 @@ class CartoonView(c: Context) : View(c) {
         drawAnimal(cv, a, cx, cy, r, t)
 
         val sec = seconds
-        val ci = if (sec >= 0) sec % balloonColors.size else ((t / 1.5f).toInt() % balloonColors.size)
+        val count = ((now - start) / 1000L % 10L).toInt() + 1
+        if (countUp && count != lastCount) { lastCount = count; popAt = now }
+        val ci = if (countUp) count % balloonColors.size
+            else if (sec >= 0) sec % balloonColors.size else ((t / 1.5f).toInt() % balloonColors.size)
         p.color = balloonColors[ci]
         oval.set(bx - br, by - br * 1.15f, bx + br, by + br); cv.drawOval(oval, p)
         p.color = 0x55FFFFFF
@@ -131,6 +139,7 @@ class CartoonView(c: Context) : View(c) {
 
         val pop = 1f + 0.35f * max(0f, 1f - (now - popAt) / 300f)
         val label = when {
+            countUp -> count.toString()
             sec > 0 -> sec.toString()
             sec == 0 -> "👍"
             else -> "⏳"
@@ -168,6 +177,7 @@ class CartoonView(c: Context) : View(c) {
         p.textSize = 17 * d
         p.color = 0xFF4C1D95.toInt()
         val msg = when {
+            countUp -> "نعد ويا " + NAMES[a] + ": " + AR_DIGITS[count - 1] + " " + WORDS[count - 1]
             sec == 0 -> "شوية ونرجع للعبة… 🎉"
             sec > 0 && exact -> NAMES[a] + " ينتظر وياك $sec ثانية"
             else -> NAMES[a] + " ينتظر وياك شوية…"

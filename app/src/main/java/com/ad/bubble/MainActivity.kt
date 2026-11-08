@@ -130,6 +130,7 @@ class MainActivity : Activity() {
         col.addView(switch("الشاشة السودة شغّالة", Prefs.closer(this)) { Prefs.setCloser(this, it) })
         col.addView(switch("شكل كارتوني للأطفال مع عد تنازلي 🐥", Prefs.cartoon(this)) { Prefs.setCartoon(this, it) })
         col.addView(hint("إذا طفيته يرجع الشكل القديم (شاشة سودة أو بيضة)."))
+        col.addView(switch("عد من 1 لـ 10 (يتعلم الأرقام) بدل العد التنازلي", Prefs.countUp(this)) { Prefs.setCountUp(this, it) })
         col.addView(switch("شاشة بيضة بدل السودة (للشكل القديم)", Prefs.whiteCover(this)) { Prefs.setWhiteCover(this, it) })
         col.addView(switch("كتم الصوت وقت الإعلان", Prefs.mute(this)) { Prefs.setMute(this, it) })
         col.addView(switch("رجوع تلقائي إذا ما لگى زر الإغلاق", Prefs.autoBack(this)) { Prefs.setAutoBack(this, it) })
