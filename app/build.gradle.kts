@@ -11,22 +11,25 @@ android {
         applicationId = "com.ad.bubble"
         minSdk = 26
         targetSdk = 33
-        versionCode = 6
+        versionCode = 7
         versionName = "1.5"
     }
 
     signingConfigs {
-        getByName("debug") {
-            storeFile = rootProject.file("debug.keystore")
-            storePassword = "android"
-            keyAlias = "androiddebugkey"
-            keyPassword = "android"
+        create("release") {
+            // المفتاح الرسمي — محفوظ بـ GitHub Secrets (SIGNING_KEY + SIGNING_PASSWORD) ومو موجود بالكود
+            storeFile = file(System.getenv("SIGNING_KEY_FILE") ?: "/nonexistent")
+            storeType = "pkcs12"
+            storePassword = System.getenv("SIGNING_PASSWORD")
+            keyAlias = "p2p37mx"
+            keyPassword = System.getenv("SIGNING_PASSWORD")
         }
     }
 
     buildTypes {
         release {
             isMinifyEnabled = false
+            signingConfig = signingConfigs.getByName("release")
         }
     }
 

@@ -1,4 +1,6 @@
 build/
 .gradle/
 *.apk
-!debug.keystore
+release.keystore
+*.keystore
+*.jks
