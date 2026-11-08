@@ -58,6 +58,60 @@ class CartoonView(c: Context) : View(c) {
         0xFFBFDBFE.toInt(), 0xFFBBF7D0.toInt(), 0xFFFED7AA.toInt(), 0xFFFEF08A.toInt()
     )
 
+    // ---------------- سحب البالون ----------------
+    /** ينادى لما يخلص السحب: مسار الإصبع (x,y,وقت بالملي ثانية من البداية) */
+    var onDrag: ((List<FloatArray>) -> Unit)? = null
+    /** يبين تلميح "اسحب البالون" */
+    var dragHint = false
+    private var dragging = false
+    private var fx = 0f
+    private var fy = 0f
+    private var lastBx = 0f
+    private var lastBy = 0f
+    private var lastBr = 0f
+    private var dragStart = 0L
+    private val pts = ArrayList<FloatArray>()
+    private var releaseAt = 0L
+    private var relX = 0f
+    private var relY = 0f
+
+    @android.annotation.SuppressLint("ClickableViewAccessibility")
+    override fun onTouchEvent(e: android.view.MotionEvent): Boolean {
+        when (e.actionMasked) {
+            android.view.MotionEvent.ACTION_DOWN -> {
+                val dx = e.x - lastBx
+                val dy = e.y - lastBy
+                if (lastBr <= 0f || dx * dx + dy * dy > (lastBr * 1.8f) * (lastBr * 1.8f)) return false
+                dragging = true
+                dragStart = SystemClock.uptimeMillis()
+                pts.clear()
+                fx = e.x; fy = e.y
+                pts.add(floatArrayOf(e.x, e.y, 0f))
+                parent?.requestDisallowInterceptTouchEvent(true)
+                return true
+            }
+            android.view.MotionEvent.ACTION_MOVE -> {
+                if (!dragging) return false
+                fx = e.x; fy = e.y
+                val tt = (SystemClock.uptimeMillis() - dragStart).toFloat()
+                val last = pts.last()
+                if (tt - last[2] >= 16f) pts.add(floatArrayOf(e.x, e.y, tt))
+                return true
+            }
+            android.view.MotionEvent.ACTION_UP, android.view.MotionEvent.ACTION_CANCEL -> {
+                if (!dragging) return false
+                dragging = false
+                val tt = (SystemClock.uptimeMillis() - dragStart).toFloat()
+                pts.add(floatArrayOf(e.x, e.y, maxOf(tt, pts.last()[2] + 1f)))
+                releaseAt = SystemClock.uptimeMillis()
+                relX = e.x; relY = e.y
+                if (pts.size >= 2) onDrag?.invoke(ArrayList(pts))
+                return true
+            }
+        }
+        return false
+    }
+
     /** لما الطفل يدوس ✕: الحيوان ينطّ ويگول "استنى شوية" */
     fun poke() {
         pokeAt = SystemClock.uptimeMillis()
@@ -106,9 +160,21 @@ class CartoonView(c: Context) : View(c) {
         oval.set(cx - sh, baseY + r * 0.95f, cx + sh, baseY + r * 1.15f); cv.drawOval(oval, p)
 
         // خيط + بالون
-        val bx = cx + r * 0.95f + sin(t * 1.6).toFloat() * 8 * d
-        val by = cy - r * 2.35f
         val br = r * 0.85f
+        val homeX = cx + r * 0.95f + sin(t * 1.6).toFloat() * 8 * d
+        val homeY = cy - r * 2.35f
+        var bx = homeX
+        var by = homeY
+        if (dragging) {
+            bx = fx; by = fy
+        } else if (now - releaseAt < 450) {
+            // يرجع لمكانه بنعومة
+            val k = (now - releaseAt) / 450f
+            val e2 = 1f - (1f - k) * (1f - k)
+            bx = relX + (homeX - relX) * e2
+            by = relY + (homeY - relY) * e2
+        }
+        lastBx = bx; lastBy = by; lastBr = br
         p.color = 0xFF475569.toInt()
         p.style = Paint.Style.STROKE
         p.strokeWidth = 2 * d
@@ -183,6 +249,12 @@ class CartoonView(c: Context) : View(c) {
             else -> NAMES[a] + " ينتظر وياك شوية…"
         }
         cv.drawText(msg, w / 2, h * 0.30f + 30 * d, p)
+        if (dragHint && !dragging) {
+            p.textSize = 17 * d
+            p.color = 0xFF14532D.toInt()
+            val wob = sin(t * 4).toFloat() * 10 * d
+            cv.drawText("👈 اسحب البالون يمين ويسار 👉", w / 2 + wob, h * 0.93f, p)
+        }
         p.typeface = Typeface.DEFAULT
         p.strokeCap = Paint.Cap.BUTT
 

@@ -53,6 +53,7 @@ class AdCloserService : AccessibilityService() {
     private var adClose: AccessibilityNodeInfo? = null
     private var adSkip: AccessibilityNodeInfo? = null
     private var blindMode = false
+    private var guardUntil = 0L
     private var lastBlind = 0L
     private var blindSide = 0
     private var adPkg: String? = null
@@ -111,7 +112,7 @@ class AdCloserService : AccessibilityService() {
 
         // إذا ضغطنا شي وفتح المتجر/المتصفح بالغلط → نرجع فوراً
         if (e.eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED && pkg in STORE_PKGS &&
-            now() - clickedAt < 4000
+            (now() - clickedAt < 4000 || now() < guardUntil)
         ) {
             clickedAt = 0L
             performGlobalAction(GLOBAL_ACTION_BACK)
@@ -243,6 +244,7 @@ class AdCloserService : AccessibilityService() {
             val cv = CartoonView(this).apply {
                 animal = Prefs.nextAnimal(this@AdCloserService)
                 countUp = Prefs.countUp(this@AdCloserService)
+                onDrag = { pts -> replayDrag(pts) }
             }
             root.addView(cv, FrameLayout.LayoutParams(-1, -1))
             cartoon = cv
@@ -453,6 +455,7 @@ class AdCloserService : AccessibilityService() {
             val elapsed = t - shownAt
             if (!blindMode && rClose == null && rSkip == null && elapsed > 32_000) blindMode = true
             setBtn(xBtn, rClose != null)
+            cartoon?.dragHint = rClose == null && rSkip == null && elapsed > 4000
             setBtn(skipBtn, rSkip != null || blindMode, hide = true)
 
             // الإغلاق التلقائي
@@ -463,7 +466,7 @@ class AdCloserService : AccessibilityService() {
                 lastClick = t
                 clickNode(rSkip)
             } else if (rClose == null && rSkip == null) {
-                if (blindMode && t - lastBlind > 3500) {
+                if (blindMode && t - lastBlind > 3500 && t > guardUntil - 4000) {
                     blindTap()
                 } else if (!blindMode && Prefs.autoBack(this@AdCloserService) && elapsed > 1500 && t - lastBack > 3000) {
                     pressBack()
@@ -592,6 +595,55 @@ class AdCloserService : AccessibilityService() {
         node.getBoundsInScreen(r)
         if (r.isEmpty) return
         tapThroughCover(r.exactCenterX(), r.exactCenterY())
+    }
+
+    /**
+     * سحب البالون → نعيد نفس الحركة على الإعلان اللي ورا (بأسفل الشاشة، بعيد عن زر التثبيت)
+     * حتى الإعلانات اللي "لازم تلعبها" تتحرك لين يطلع زر التجاوز/الإغلاق.
+     */
+    private fun replayDrag(pts: List<FloatArray>) {
+        val c = cover ?: return
+        val lp = coverParams ?: return
+        val dm = resources.displayMetrics
+        val w = dm.widthPixels.toFloat()
+        val hgt = dm.heightPixels.toFloat()
+        val baseY = hgt * 0.68f
+        val y0 = pts[0][1]
+        val path = Path()
+        for ((i, q) in pts.withIndex()) {
+            val x = q[0].coerceIn(w * 0.05f, w * 0.95f)
+            val y = (baseY + (q[1] - y0) * 0.5f).coerceIn(hgt * 0.45f, hgt * 0.9f)
+            if (i == 0) path.moveTo(x, y) else path.lineTo(x, y)
+        }
+        val maxDur = GestureDescription.getMaxGestureDuration()
+        val dur = pts.last()[2].toLong().coerceIn(80L, minOf(maxDur, 15_000L))
+        val g = try {
+            GestureDescription.Builder()
+                .addStroke(GestureDescription.StrokeDescription(path, 0, dur))
+                .build()
+        } catch (_: Exception) {
+            return
+        }
+        guardUntil = now() + dur + 5000
+        lp.flags = lp.flags or WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE
+        try { wm.updateViewLayout(c, lp) } catch (_: Exception) { }
+        val restore = Runnable {
+            val c2 = cover
+            val lp2 = coverParams
+            if (c2 != null && lp2 != null) {
+                lp2.flags = lp2.flags and WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE.inv()
+                try { wm.updateViewLayout(c2, lp2) } catch (_: Exception) { }
+            }
+        }
+        h.postDelayed({
+            val ok = dispatchGesture(g, object : GestureResultCallback() {
+                override fun onCompleted(gestureDescription: GestureDescription?) { h.post(restore) }
+                override fun onCancelled(gestureDescription: GestureDescription?) { h.post(restore) }
+            }, null)
+            if (!ok) h.post(restore)
+            // احتياط لو ما رجع الـ callback
+            h.postDelayed(restore, dur + 800)
+        }, 40)
     }
 
     private fun tapThroughCover(x: Float, y: Float) {
