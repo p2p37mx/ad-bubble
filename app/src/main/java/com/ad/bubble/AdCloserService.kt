@@ -106,7 +106,7 @@ class AdCloserService : AccessibilityService() {
         if (pkg in YT_PKGS) {
             if (Prefs.ytSkip(this)) ytCheck(pkg)
         } else if (ytMuted && e.eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED) {
-            setMute(false)
+            setMute("yt", false)
             ytMuted = false
         }
 
@@ -194,20 +194,12 @@ class AdCloserService : AccessibilityService() {
             clickNode(skip)
         }
         if (Prefs.mute(this)) {
-            if (adShown && !ytMuted) { setMute(true); ytMuted = true }
-            else if (!adShown && ytMuted) { setMute(false); ytMuted = false }
+            if (adShown && !ytMuted) { setMute("yt", true); ytMuted = true }
+            else if (!adShown && ytMuted) { setMute("yt", false); ytMuted = false }
         }
     }
 
-    private fun setMute(on: Boolean) {
-        try {
-            getSystemService(AudioManager::class.java).adjustStreamVolume(
-                AudioManager.STREAM_MUSIC,
-                if (on) AudioManager.ADJUST_MUTE else AudioManager.ADJUST_UNMUTE, 0
-            )
-        } catch (_: Exception) {
-        }
-    }
+    private fun setMute(src: String, on: Boolean) = AdMute.set(this, src, on)
 
     private fun isActivity(pkg: String, cls: String): Boolean {
         val key = "$pkg/$cls"
@@ -291,6 +283,8 @@ class AdCloserService : AccessibilityService() {
         adSkip = null
         blindMode = false
         lastBlind = 0L
+        escStep = 0
+        lastRelaunch = 0L
         setBtn(close, false)
         setBtn(skip, false, hide = true)
 
@@ -322,7 +316,7 @@ class AdCloserService : AccessibilityService() {
         }
 
         if (Prefs.mute(this) && !muted) {
-            setMute(true)
+            setMute("cover", true)
             muted = true
         }
         h.removeCallbacks(tick)
@@ -343,7 +337,7 @@ class AdCloserService : AccessibilityService() {
         adPkg = null
         if (muted) {
             muted = false
-            setMute(false)
+            setMute("cover", false)
         }
     }
 
@@ -404,6 +398,75 @@ class AdCloserService : AccessibilityService() {
         }
     }
 
+    // ---------------- بعد 30 ثانية: محاولات بالخلفية ----------------
+    private var escStep = 0
+    private var lastRelaunch = 0L
+    private val cornerPts = arrayOf(
+        floatArrayOf(0.95f, 0.04f), floatArrayOf(0.05f, 0.04f),
+        floatArrayOf(0.92f, 0.07f), floatArrayOf(0.08f, 0.07f),
+        floatArrayOf(0.95f, 0.025f), floatArrayOf(0.05f, 0.025f),
+        floatArrayOf(0.94f, 0.10f), floatArrayOf(0.06f, 0.10f),
+        floatArrayOf(0.90f, 0.05f), floatArrayOf(0.10f, 0.05f)
+    )
+
+    /**
+     * سلّم محاولات: زوايا الشاشة كلها ← زر المتجر (نفتحه ونرجع، غالباً يطلع ✕ بعدها) ←
+     * أزرار الإعلان وحدة وحدة ← رجوع ← وبالأخير نرجّع اللعبة للواجهة.
+     * الغطاء يبقى طول الوقت، فالطفل ما يشوف شي.
+     */
+    private fun escalate(r: Scan?, sinceAd: Long) {
+        val t = now()
+        lastBlind = t
+        val pkg = adPkg ?: return
+        // آخر حل: نرجّع شاشة اللعبة نفسها فوق الإعلان
+        if (sinceAd > 55_000 && t - lastRelaunch > 15_000) {
+            lastRelaunch = t
+            bringGameFront(pkg)
+            return
+        }
+        val dm = resources.displayMetrics
+        when (escStep % 4) {
+            0, 1 -> {
+                // زاويتين بكل خطوة
+                for (k in 0 until 2) {
+                    val pt = cornerPts[(escStep / 4 * 2 + k + escStep) % cornerPts.size]
+                    val x = dm.widthPixels * pt[0]
+                    val y = dm.heightPixels * pt[1]
+                    h.postDelayed({ if (cover != null) { clickedAt = now(); tapThroughCover(x, y) } }, k * 450L)
+                }
+            }
+            2 -> {
+                val st = r?.store
+                val list = r?.clickables ?: emptyList()
+                when {
+                    st != null && escStep % 8 == 2 -> {
+                        guardUntil = t + 6000
+                        clickNode(st)
+                    }
+                    list.isNotEmpty() -> {
+                        guardUntil = t + 6000
+                        val n = list[(escStep / 4) % list.size]
+                        clickNode(n)
+                    }
+                    else -> pressBack()
+                }
+            }
+            else -> pressBack()
+        }
+        escStep++
+    }
+
+    private fun bringGameFront(pkg: String) {
+        try {
+            val li = packageManager.getLaunchIntentForPackage(pkg) ?: return
+            li.addFlags(
+                Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP
+            )
+            startActivity(li)
+        } catch (_: Exception) {
+        }
+    }
+
     /** إذا الإعلان ما يبين أزراره (مرسوم داخل لعبة/ويب)، ندوس أماكن الأزرار المعتادة بالزوايا */
     private fun blindTap() {
         val dm = resources.displayMetrics
@@ -453,7 +516,7 @@ class AdCloserService : AccessibilityService() {
             adClose = rClose
             adSkip = rSkip
             val elapsed = t - shownAt
-            if (!blindMode && rClose == null && rSkip == null && elapsed > 32_000) blindMode = true
+            if (!blindMode && rClose == null && rSkip == null && t - adStartedAt > 30_000) blindMode = true
             setBtn(xBtn, rClose != null)
             cartoon?.dragHint = rClose == null && rSkip == null && elapsed > 4000
             setBtn(skipBtn, rSkip != null || blindMode, hide = true)
@@ -466,8 +529,10 @@ class AdCloserService : AccessibilityService() {
                 lastClick = t
                 clickNode(rSkip)
             } else if (rClose == null && rSkip == null) {
-                if (blindMode && t - lastBlind > 3500 && t > guardUntil - 4000) {
-                    blindTap()
+                val sinceAd = t - adStartedAt
+                if (sinceAd >= 30_000 && t > guardUntil - 4000) {
+                    // انتهى وقت الإعلان: نجرب كل شي بالخلفية لين يتسكّر
+                    if (t - lastBlind > 1500) escalate(r, sinceAd)
                 } else if (!blindMode && Prefs.autoBack(this@AdCloserService) && elapsed > 1500 && t - lastBack > 3000) {
                     pressBack()
                 }
@@ -506,7 +571,13 @@ class AdCloserService : AccessibilityService() {
         val close: AccessibilityNodeInfo?,
         val skip: AccessibilityNodeInfo?,
         val corner: AccessibilityNodeInfo?,
-        val seconds: Int?
+        val seconds: Int?,
+        val store: AccessibilityNodeInfo? = null,
+        val clickables: List<AccessibilityNodeInfo> = emptyList()
+    )
+
+    private val storeWords = listOf(
+        "install", "download", "get it", "play now", "open store", "المتجر", "تثبيت", "تحميل", "نزّل", "العب الآن"
     )
 
     /** يدوّر بالإعلان على: زر إغلاق واضح، زر صغير بالزاوية (سهم/✕ بلا اسم)، ورقم العد التنازلي */
@@ -518,6 +589,8 @@ class AdCloserService : AccessibilityService() {
         val maxS = dp(96f)
         var close: AccessibilityNodeInfo? = null
         var skip: AccessibilityNodeInfo? = null
+        var store: AccessibilityNodeInfo? = null
+        val clickables = ArrayList<AccessibilityNodeInfo>()
         var corner: AccessibilityNodeInfo? = null
         var cornerScore = Int.MAX_VALUE
         var secs: Int? = null
@@ -546,7 +619,11 @@ class AdCloserService : AccessibilityService() {
                 }
             }
 
-            if (bad) continue
+            if (n.isClickable && clickables.size < 30) clickables.add(n)
+            if (bad) {
+                if (store == null && n.isClickable && storeWords.any { words.contains(it) }) store = n
+                continue
+            }
             // زر إغلاق واضح
             var isClose = false
             var isSkip = false
@@ -576,7 +653,7 @@ class AdCloserService : AccessibilityService() {
             val score = dx + cy
             if (score < cornerScore) { cornerScore = score; corner = n }
         }
-        return Scan(close, skip, corner, secs)
+        return Scan(close, skip, corner, secs, store, clickables)
     }
 
     private fun clickNode(node: AccessibilityNodeInfo) {

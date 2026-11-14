@@ -40,6 +40,10 @@ object Prefs {
     fun countUp(c: Context) = sp(c).getBoolean("countUp", true)
     fun setCountUp(c: Context, v: Boolean) = sp(c).edit().putBoolean("countUp", v).apply()
 
+    /** كتم إعلانات يوتيوب حتى بالسيارة / الشاشة مطفية (من جلسة الوسائط) */
+    fun carMute(c: Context) = sp(c).getBoolean("carMute", true)
+    fun setCarMute(c: Context, v: Boolean) = sp(c).edit().putBoolean("carMute", v).apply()
+
     fun ytSkip(c: Context) = sp(c).getBoolean("ytSkip", true)
     fun setYtSkip(c: Context, v: Boolean) = sp(c).edit().putBoolean("ytSkip", v).apply()
 

@@ -40,6 +40,8 @@ class MainActivity : Activity() {
     private lateinit var bubbleBtn: Button
     private lateinit var accBtn: Button
     private lateinit var domainsEdit: EditText
+    private lateinit var carBtn: Button
+    private lateinit var mediaInfo: TextView
 
     private fun dp(v: Float) = TypedValue.applyDimension(
         TypedValue.COMPLEX_UNIT_DIP, v, resources.displayMetrics
@@ -137,6 +139,25 @@ class MainActivity : Activity() {
         col.addView(switch("يوتيوب: تخطي الإعلان تلقائياً + كتم صوته", Prefs.ytSkip(this)) { Prefs.setYtSkip(this, it) })
         col.addView(hint("إعلانات يوتيوب تجي من نفس سيرفرات الفيديو فما تنحجب، بس تنتخطى أول ما يطلع زر «تخطي». يحتاج الشاشة السودة (③) مفعّلة."))
 
+        col.addView(section("يوتيوب بالسيارة 🚗"))
+        col.addView(switch("كتم إعلانات يوتيوب بالسيارة والشاشة مطفية", Prefs.carMute(this)) { Prefs.setCarMute(this, it) })
+        carBtn = button("④ تفعيل الكتم بالسيارة (الوصول للإشعارات)") {
+            try { startActivity(Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS)) } catch (_: Exception) { }
+        }
+        col.addView(carBtn)
+        col.addView(hint("اختار «فقاعة الإعلانات» وفعّلها. هذا يخلي التطبيق يعرف إذا يوتيوب يشغّل إعلان حتى لو الشاشة مطفية أو الموبايل على Android Auto، فيكتمه. (بالسيارة الكتم بس، التخطي يحتاج شاشة الموبايل.)"))
+        mediaInfo = TextView(this).apply {
+            textSize = 12f
+            setTextColor(Color.DKGRAY)
+            setPadding(dp(8f), dp(6f), dp(8f), dp(6f))
+            setBackgroundColor(Color.parseColor("#F3F4F6"))
+            textDirection = View.TEXT_DIRECTION_ANY_RTL
+        }
+        col.addView(mediaInfo)
+
+        col.addView(section("مشغّل عائم 🎬 (مثل PiP)"))
+        col.addView(hint("من يوتيوب: افتح الفيديو ← مشاركة ← اختار «مشغّل عائم 🎬». الفيديو يطلع بنافذة صغيرة فوگ كل التطبيقات ويكمل لما تطلع من يوتيوب. ⠿ للسحب • ⤢ تكبير/تصغير • 🌐 إذا ما اشتغل الفيديو جرّب هذا • ✕ سكّر."))
+
         col.addView(section("لعبة بعدها تطلع بيها إعلانات؟"))
         col.addView(button("📋 آخر المواقع اللي طلبتها التطبيقات") { showRecent() })
         col.addView(button("🪟 آخر الشاشات (إذا الشاشة السودة ما طلعت)") { showScreens() })
@@ -208,6 +229,10 @@ class MainActivity : Activity() {
             "الفقاعة: " + (if (BubbleService.running) "ظاهرة" else "مخفية")
         vpnBtn.text = if (vpn) "① إيقاف حجب الإعلانات" else "① تشغيل حجب الإعلانات"
         bubbleBtn.text = if (BubbleService.running) "② إخفاء الفقاعة" else "② إظهار الفقاعة"
+        carBtn.text = if (MediaWatchService.connected) "④ الكتم بالسيارة مفعّل ✅" else "④ تفعيل الكتم بالسيارة (الوصول للإشعارات)"
+        mediaInfo.text = if (!MediaWatchService.connected) "مراقبة يوتيوب: مو مفعّلة"
+            else if (MediaWatchService.lastInfo.isEmpty()) "مراقبة يوتيوب: شغّالة — ماكو تشغيل هسه"
+            else "مراقبة يوتيوب:\n" + MediaWatchService.lastInfo
         accBtn.text = if (acc) "③ الشاشة السودة مفعّلة ✅ (فتح الإعدادات)" else "③ تفعيل الشاشة السودة لغلق الإعلانات"
     }
 
